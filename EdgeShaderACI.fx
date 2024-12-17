@@ -1,6 +1,8 @@
+#include "Reshade.fxh"
+
 //
 // As per reshade documentation
-void PostProcessVS(in uint id : SV_VertexID, out float4 position : SV_Position, out float2 texcoord : TEXCOORD)
+void EdgePostProcessVS(in uint id : SV_VertexID, out float4 position : SV_Position, out float2 texcoord : TEXCOORD)
 {
 	if (id == 2)
 		texcoord.x = 2.0;
@@ -35,6 +37,26 @@ uniform float _NormalThreshold <
     ui_tooltip          = "Adjust the threshold for normal differences to count as an edge.";
 > = 0.1f;
 
+uniform float _AlphaDropOff <
+    ui_category         = "Preprocess Settings";
+    ui_category_closed  = true;
+    ui_min              = 0.0f;
+    ui_max              = 1.0f;
+    ui_type             = "slider";
+    ui_label            = "AlphaDropOff";
+    ui_tooltip          = "Adjust the threshold for normal differences to count as an edge.";
+> = 0.1f;
+
+uniform float3 _Color <
+    ui_category         = "Preprocess Settings";
+    ui_category_closed  = true;
+    ui_min              = 0.0f;
+    ui_max              = 1.0f;
+    ui_type             = "color";
+    ui_label            = "Color";
+    ui_tooltip          = "Adjust the threshold for normal differences to count as an edge.";
+> = 0.1f;
+
 texture2D NormalTex {
     Width       = BUFFER_WIDTH;
     Height      = BUFFER_HEIGHT;
@@ -64,7 +86,7 @@ sampler2D Edges {
 //
 // As defined per reshade documentation
 #ifndef RESHADE_DEPTH_LINEARIZATION_FAR_PLANE
-	#define RESHADE_DEPTH_LINEARIZATION_FAR_PLANE 1000.0
+	#define RESHADE_DEPTH_LINEARIZATION_FAR_PLANE 10000.0
 #endif
 
 texture DepthBufferTex : DEPTH;
@@ -114,21 +136,41 @@ float4 PS_EdgeDetect(float4 position : SV_POSITION, float2 uv : TEXCOORD) : SV_T
     float4 sw = tex2D(Normals, uv + float2( 1, -1) * texelSize);
     float4 ne = tex2D(Normals, uv + float2(-1,  1) * texelSize);
     float4 se = tex2D(Normals, uv + float2( 1,  1) * texelSize);
-    
-    float output = 0.0f;
 
     float depthSum = 0.0f;
-    depthSum += abs(w.w  - c.w);
-    depthSum += abs(e.w  - c.w);
-    depthSum += abs(n.w  - c.w);
-    depthSum += abs(s.w  - c.w);
-    depthSum += abs(nw.w - c.w);
-    depthSum += abs(sw.w - c.w);
-    depthSum += abs(ne.w - c.w);
-    depthSum += abs(se.w - c.w);
+    //depthSum += abs(w.w  - c.w);
+    //depthSum += abs(e.w  - c.w);
+    //depthSum += abs(n.w  - c.w);
+    //depthSum += abs(s.w  - c.w);
+    //depthSum += abs(nw.w - c.w);
+    //depthSum += abs(sw.w - c.w);
+    //depthSum += abs(ne.w - c.w);
+    //depthSum += abs(se.w - c.w);
+    
 
-    if (depthSum > _DepthThreshold)
-        output = 1.0f;
+    depthSum += abs(tex2Dlod(ReShade::DepthBuffer, float4(uv + float2(-1,  0) * texelSize, 0, 0)).x - tex2Dlod(ReShade::DepthBuffer, float4(uv, 0, 0)).x);
+    depthSum += abs(tex2Dlod(ReShade::DepthBuffer, float4(uv + float2( 1,  0) * texelSize, 0, 0)).x - tex2Dlod(ReShade::DepthBuffer, float4(uv, 0, 0)).x);
+    depthSum += abs(tex2Dlod(ReShade::DepthBuffer, float4(uv + float2( 0, -1) * texelSize, 0, 0)).x - tex2Dlod(ReShade::DepthBuffer, float4(uv, 0, 0)).x);
+    depthSum += abs(tex2Dlod(ReShade::DepthBuffer, float4(uv + float2( 0,  1) * texelSize, 0, 0)).x - tex2Dlod(ReShade::DepthBuffer, float4(uv, 0, 0)).x);
+    depthSum += abs(tex2Dlod(ReShade::DepthBuffer, float4(uv + float2(-1, -1) * texelSize, 0, 0)).x - tex2Dlod(ReShade::DepthBuffer, float4(uv, 0, 0)).x);
+    depthSum += abs(tex2Dlod(ReShade::DepthBuffer, float4(uv + float2( 1, -1) * texelSize, 0, 0)).x - tex2Dlod(ReShade::DepthBuffer, float4(uv, 0, 0)).x);
+    depthSum += abs(tex2Dlod(ReShade::DepthBuffer, float4(uv + float2(-1,  1) * texelSize, 0, 0)).x - tex2Dlod(ReShade::DepthBuffer, float4(uv, 0, 0)).x);
+    depthSum += abs(tex2Dlod(ReShade::DepthBuffer, float4(uv + float2( 1,  1) * texelSize, 0, 0)).x - tex2Dlod(ReShade::DepthBuffer, float4(uv, 0, 0)).x);
+
+    float depth = tex2Dlod(ReShade::DepthBuffer, float4(uv, 0, 0)).x;
+    depth /= RESHADE_DEPTH_LINEARIZATION_FAR_PLANE - depth * (RESHADE_DEPTH_LINEARIZATION_FAR_PLANE - 1);
+    depth = 1 - depth / RESHADE_DEPTH_LINEARIZATION_FAR_PLANE;
+    //depth /= RESHADE_DEPTH_LINEARIZATION_FAR_PLANE;
+    
+    //depth = (exp(depth * log(0.01 + 1.0)) - 1.0) / 0.01;
+    //depth = 1 / depth;
+    //depthSum = 1 / depth;
+
+    //depthSum *= 10000;
+    
+    //if (true)
+    //    return float4(depthSum, depthSum, depthSum, 1.0f);
+
 
     float3 normalSum = 0.0f;
     normalSum += abs(w.rgb  - c.rgb);
@@ -140,22 +182,30 @@ float4 PS_EdgeDetect(float4 position : SV_POSITION, float2 uv : TEXCOORD) : SV_T
     normalSum += abs(ne.rgb - c.rgb);
     normalSum += abs(se.rgb - c.rgb);
 
-    if (dot(normalSum, 1) > _NormalThreshold)
-        output = 1.0f;
-
-    return float4(output, output, output, 1.0);
+    float alpha = 0;
+    float4 output = float4(0, 0, 0, 0);
+    if (dot(normalSum, 1) > _NormalThreshold && depthSum > _DepthThreshold / 10000)
+    {
+        output.r = _Color.r;
+        output.g = _Color.g;
+        output.b = _Color.b;
+        output.a = 1;// - depth * _AlphaDropOff;// - depth * _AlphaDropOff;
+    }
+    
+    return output;
 }
 
 technique E_DET < ui_label = "_E_DET"; ui_tooltip = "Replaces the screen image with an edges image."; > {
     pass {
         RenderTarget = NormalTex;
-        VertexShader = PostProcessVS;
+        VertexShader = EdgePostProcessVS;
         PixelShader = PS_CalculateNormals;
     }
 
     pass {
         RenderTarget = EgesTex;
-        VertexShader = PostProcessVS;
+        VertexShader = EdgePostProcessVS;
         PixelShader = PS_EdgeDetect;
     }
 }
+
