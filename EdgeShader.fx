@@ -20,7 +20,7 @@ void EdgePostProcessVS(in uint id : SV_VertexID, out float4 position : SV_Positi
 }
 
 uniform float _DepthThreshold <
-    ui_category         = "Preprocess Settings";
+    ui_category         = "Edge Highlight Settings";
     ui_category_closed  = true;
     ui_min              = 0.0f;
     ui_max              = 0.1f;
@@ -30,7 +30,7 @@ uniform float _DepthThreshold <
 > = 0.1f;
 
 uniform float _NormalThreshold <
-    ui_category         = "Preprocess Settings";
+    ui_category         = "Edge Highlight Settings";
     ui_category_closed  = true;
     ui_min              = 0.0f;
     ui_max              = 5.0f;
@@ -40,7 +40,7 @@ uniform float _NormalThreshold <
 > = 0.1f;
 
 uniform float _AlphaDropOff <
-    ui_category         = "Preprocess Settings";
+    ui_category         = "Edge Highlight Settings";
     ui_category_closed  = true;
     ui_min              = 0.0f;
     ui_max              = 1.0f;
@@ -50,7 +50,7 @@ uniform float _AlphaDropOff <
 > = 0.1f;
 
 uniform float _AlphaMultiplier <
-    ui_category         = "Preprocess Settings";
+    ui_category         = "Edge Highlight Settings";
     ui_category_closed  = true;
     ui_min              = 0.0f;
     ui_max              = 1.0f;
@@ -60,7 +60,7 @@ uniform float _AlphaMultiplier <
 > = 0.1f;
 
 uniform bool _DrawEdges <
-    ui_category         = "Preprocess Settings";
+    ui_category         = "Edge Highlight Settings";
     ui_category_closed  = true;
     ui_type             = "box";
     ui_label            = "Draw Edges";
@@ -68,7 +68,7 @@ uniform bool _DrawEdges <
 > = 0.1f;
 
 uniform bool _DLAAEdges <
-    ui_category         = "Preprocess Settings";
+    ui_category         = "Edge Highlight Settings";
     ui_category_closed  = true;
     ui_type             = "box";
     ui_label            = "DLAA Edges";
@@ -76,7 +76,7 @@ uniform bool _DLAAEdges <
 > = 0.1f;
 
 uniform float _AlphaDLAAThreshold <
-    ui_category         = "Preprocess Settings";
+    ui_category         = "Edge Highlight Settings";
     ui_category_closed  = true;
     ui_min              = 0.0f;
     ui_max              = 1.0f;
@@ -86,7 +86,7 @@ uniform float _AlphaDLAAThreshold <
 > = 0.1f;
 
 uniform float3 _Color <
-    ui_category         = "Preprocess Settings";
+    ui_category         = "Edge Highlight Settings";
     ui_category_closed  = true;
     ui_min              = 0.0f;
     ui_max              = 1.0f;
@@ -95,27 +95,45 @@ uniform float3 _Color <
     ui_tooltip          = "";
 > = 0.1f;
 
-uniform bool _TaFilterSpectrumPreview <
-    ui_category         = "Preprocess Settings";
-    ui_category_closed  = true;
-    ui_label            = "TA Spectrum";
-    ui_tooltip          = "Preview color spectrum changes";
-> = false;
 
+uniform bool _CDS_Enable <
+    ui_category         = "Color Defficiency";
+    ui_label            = "Enable Color defficiency simulation or aid filters";
+    ui_category_toggle = true;
+> = true;
 
-uniform bool _TaFilterTrianopy <
-    ui_category         = "Preprocess Settings";
-    ui_category_closed  = true;
-    ui_label            = "Trianopy aid filter";
-    ui_tooltip          = "Apply Trianopy aid filter";
-> = false;
+uniform int _CDS_DeffType <
+    ui_category         = "Color Defficiency";
+    ui_label            = "Color perception defficiency target";
+    ui_type             = "combo";
+    ui_items            = "protan\0deutan\0tritan\0";
+>;
 
-uniform bool _TaFilterSimulateTrianopy <
-    ui_category         = "Preprocess Settings";
-    ui_category_closed  = true;
-    ui_label            = "Simulate Trianopy";
-    ui_tooltip          = "Apply Trianopy simulation filter";
-> = false;
+uniform int _CDS_FilterType <
+    ui_category         = "Color Defficiency";
+    ui_label            = "Filter type";
+    ui_type             = "combo";
+    ui_items            = "sim\0correct\0correct and sim\0";
+>;
+
+uniform float3 _CDS_Blue_Key <
+    ui_category         = "Color Defficiency";
+    ui_label            = "blue fixed point (for protan and deutan)";
+    ui_type             = "color";
+>;
+
+uniform float3 _CDS_Yellow_Key <
+    ui_category         = "Color Defficiency";
+    ui_label            = "yellow fixed point (for protan and deutan)";
+    ui_type             = "color";
+>;
+
+uniform float3 _CDS_Tritan_Key <
+    ui_category         = "Color Defficiency";
+    ui_label            = "Tritan filter fixed point (set this to cyan or green)";
+    ui_type             = "color";
+>;
+
 
 texture BackBufferTex : COLOR;
 
@@ -352,92 +370,108 @@ float4 PS_Out(float4 position : SV_POSITION, float2 uv : TEXCOORD) : SV_TARGET {
     return color;
 }
 
-float3 rgb_to_hsv(float3 rgb) {
-    float r = rgb.r;
-    float g = rgb.g;
-    float b = rgb.b;
-
-    float M = max(max(r,g),b);
-    float m = min(min(r,g),b);
-
-    float c = M - m;
-
-    float h, s, v;
-
-    s = c / M;
-
-    float R, G, B;
-
-    R = (M-r) / c;
-    G = (M-g) / c;
-    B = (M-b) / c;
-
-    if (M == m) h = 0;
-    else if (M == r) h = 0.0f + B - G;
-    else if (M == g) h = 2 + R - B;
-    else h = 4 + G - R;
-
-    h = frac(h / 6.0f) * 360;
-
-    v = M;
-
-    return float3(h,s,v);
+// https://daltonlens.org/understanding-cvd-simulation/
+float3 rgb_to_xyz(float3 rgb){
+    float3x3 conv_mat = float3x3(
+            40.9568 , 35.5041 , 17.9167,
+            21.3389 , 70.6743 ,  7.9868 ,
+            1.86297, 11.462  , 91.2367
+        );
+    
+    return mul(conv_mat, rgb);
 }
 
-float3 hsv_to_rgb(float3 hsv) {
-    float h = hsv.r;
-    float s = hsv.g;
-    float v = hsv.b;
-
-    float C = v * s;
-
-    float X = C * (1 - abs( frac(h / 60 / 2) * 2 - 1));
-    float m = v - C;
-
-    float R = 0.0f, G = 0.0f, B = 0.0f;
-
-    if (h < 60) {
-        R = C;
-        G = X;
-    } else if (h < 120) {
-        R = X;
-        G = C;
-    } else if (h < 180) {
-        G = C;
-        B = X;
-    } else if (h < 240) {
-        G = X;
-        B = C;
-    } else if (h < 300) {
-        R = X;
-        B = C;
-    } else {
-        R = C;
-        B = X;
-    }
-
-    R = R + m;
-    G = G + m;
-    B = B + m;
-
-    return float3(R, G, B);
-
+float3 xyz_to_lms(float3 xyz) {
+    float3x3 conv_mat = float3x3(
+            0.15514 ,   0.54312 , -0.03286,
+            -0.15514 ,  0.45684 , 0.03286,
+            0,          0 ,       0.01608
+        );
+    return mul(conv_mat, xyz);
 }
 
-float remap_r_t_r(float h,float r1min,float r1max,float r2min,float r2max)
-{
-    return (h-r1min) / (r1max - r1min) * (r2max -r2min) + r2min;
+float3 rgb_to_lms(float3 rgb) {
+    return xyz_to_lms(rgb_to_xyz(rgb));
 }
 
-float h_filter(float h) {
-    if (h < 40) return remap_r_t_r(h, 0, 40, 0, 20);
-    if (h < 50) return remap_r_t_r(h, 40, 50, 20, 100);
-    if (h < 80) return remap_r_t_r(h, 50, 80, 100, 150);
-    if (h < 140) return remap_r_t_r(h, 80, 140, 150, 200);
-    if (h < 280) return remap_r_t_r(h, 140, 280, 200, 230);
-    if (h < 340) return remap_r_t_r(h, 280, 340, 230, 280);
-    return remap_r_t_r(h, 340, 360, 280, 360);
+float3 lms_to_xyz(float3 lms) {
+    float3x3 conv_mat = float3x3(
+        2.94481 , -3.50098 , 13.1722,
+        1.00004 , 1.00004 , 0,
+        0 , 0 , 62.1891
+        );
+    return mul(conv_mat, lms);
 }
+
+float3 xyz_to_rgb(float3 xyz) {
+    float3x3 conv_mat = float3x3(
+        0.0328041   , -0.0156571    , -0.00507134,
+        -0.00997051 , 0.019112      , 0.000284916,
+        0.000582757 , -0.00208132   , 0.0110283
+        );
+    return mul(conv_mat, xyz);
+}
+
+float3 lms_to_rgb(float3 lms) {
+    return xyz_to_rgb(lms_to_xyz(lms));
+}
+
+float3x3 get_sim_matrix_protan(float3 blue_rgb, float3 yellow_rgb) {
+    float3 blue_lms = rgb_to_lms(blue_rgb);
+    float3 yellow_lms = rgb_to_lms(yellow_rgb);
+    float3 n = cross(yellow_lms, blue_lms);
+    return float3x3(
+        0, -n.y/n.x, -n.z/n.x,
+        0,1,0,
+        0,0,1
+    );
+}
+
+float3x3 get_sim_matrix_deutan(float3 blue_rgb, float3 yellow_rgb) {
+    float3 blue_lms = rgb_to_lms(blue_rgb);
+    float3 yellow_lms = rgb_to_lms(yellow_rgb);
+    float3 n = cross(yellow_lms, blue_lms);
+    return float3x3(
+        1,0,0,
+        -n.x/n.y,0,-n.z/n.y,
+        0,0,1
+    );
+}
+
+float3x3 get_sim_matrix_tritan(float3 key_rgb) {
+    float3 white_lms = rgb_to_lms(float3(1,1,1));
+    float3 key_lms = rgb_to_lms(key_rgb);
+
+    float3 n = cross(white_lms, key_lms);
+
+    return float3x3(
+        1,0,0,
+        0,1,0,
+        -n.x/n.z,-n.y/n.z,0
+    );
+}
+
+float3 simulate(float3 real, float3x3 sim_matrix) {
+    return lms_to_rgb(mul(sim_matrix, rgb_to_lms(real)));
+}
+
+float3 correct(float3 real, float3x3 sim_matrix) {
+    float3 percieved = simulate(real, sim_matrix);
+    float3x3 err_mod = float3x3(
+        0,0,0,
+        0.7,1,0,
+        0.7,0,1
+    );
+    float3 err = real - percieved;
+    return mul(err_mod, err) + real; 
+}
+
+float3 correct_and_simulate(float3 real, float3x3 sim_matrix) {
+    float3 corrected = correct(real, sim_matrix);
+
+    return simulate(corrected, sim_matrix);
+}
+
 
 // https://github.com/DaltonLens/libDaltonLens/blob/master/libDaltonLens.c
 float3 rgb_trian(float3 rgb) {
@@ -463,44 +497,36 @@ float3 rgb_trian(float3 rgb) {
     return rgb_cvd;
 }
 
-float4 PS_Detri(float4 position : SV_POSITION, float2 uv : TEXCOORD) : SV_TARGET {
 
-    // float4 0;
 
-    float3 o;
+float4 PS_CD(float4 position : SV_POSITION, float2 uv : TEXCOORD) : SV_TARGET {
 
-    if (_TaFilterSpectrumPreview) {
-        if (uv.y < 0.25f) //regular
-            o = hsv_to_rgb(float3(uv.x * 360.0f,1,1));
-        else if (uv.y < 0.5f) // regular trian
-            o = rgb_trian(hsv_to_rgb(float3(uv.x * 360.0f,1,1)));
-        else if (uv.y < 0.75f)
-            o = hsv_to_rgb(float3(h_filter(uv.x * 360.0f),1,1));
-        else 
-            o = rgb_trian(hsv_to_rgb(float3(h_filter(uv.x * 360.0f),1,1)));
-    } else {
-        float4 p_rgba = tex2D(ColorBuffer, uv);
 
-        o = p_rgba.rgb;
+    float4 p_rgba = tex2D(ColorBuffer, uv);
 
-        if (_TaFilterTrianopy) {
-            float3 p_hsv = rgb_to_hsv(o);
-            o = hsv_to_rgb(float3(h_filter(p_hsv.x), p_hsv.y, p_hsv.z));
-        }
-        if (_TaFilterSimulateTrianopy) {
-            o = rgb_trian(o);
-        }
+    if(!_CDS_Enable) return p_rgba;
+
+    float3x3 sim_matrix;
+
+    switch(_CDS_DeffType) {
+        case 0: sim_matrix = get_sim_matrix_protan(_CDS_Blue_Key, _CDS_Yellow_Key); break;
+        case 1: sim_matrix = get_sim_matrix_deutan(_CDS_Blue_Key, _CDS_Yellow_Key); break;
+        case 2: sim_matrix = get_sim_matrix_tritan(_CDS_Tritan_Key); break;
     }
 
-    
-    return float4(o,1);
+    switch(_CDS_FilterType) {
+        case 0: return float4(simulate(p_rgba.xyz, sim_matrix), p_rgba.w);
+        case 1: return float4(correct(p_rgba.xyz, sim_matrix), p_rgba.w);
+        case 2: return float4(correct_and_simulate(p_rgba.xyz, sim_matrix), p_rgba.w);
+        default: return float4(lms_to_rgb(rgb_to_lms(p_rgba.xyz)), 1);
+    }
 }
 
 technique E_DET < ui_label = "_E_DET"; ui_tooltip = "Replaces the screen image with an edges image."; > {
     pass {
         RenderTarget = DeTriTex;
         VertexShader = PostProcessVS;
-        PixelShader = PS_Detri;
+        PixelShader = PS_CD;
     }
 
     pass {
