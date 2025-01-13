@@ -1,4 +1,6 @@
 #include "Reshade.fxh"
+#include "DLAA.fx"
+
 
 //
 // As per reshade documentation
@@ -21,7 +23,7 @@ uniform float _DepthThreshold <
     ui_category         = "Preprocess Settings";
     ui_category_closed  = true;
     ui_min              = 0.0f;
-    ui_max              = 5.0f;
+    ui_max              = 0.1f;
     ui_type             = "slider";
     ui_label            = "Depth Threshold";
     ui_tooltip          = "Adjust the threshold for depth differences to count as an edge.";
@@ -44,7 +46,43 @@ uniform float _AlphaDropOff <
     ui_max              = 1.0f;
     ui_type             = "slider";
     ui_label            = "AlphaDropOff";
-    ui_tooltip          = "Adjust the threshold for normal differences to count as an edge.";
+    ui_tooltip          = "";
+> = 0.1f;
+
+uniform float _AlphaMultiplier <
+    ui_category         = "Preprocess Settings";
+    ui_category_closed  = true;
+    ui_min              = 0.0f;
+    ui_max              = 1.0f;
+    ui_type             = "slider";
+    ui_label            = "Alpha Multiplier";
+    ui_tooltip          = "";
+> = 0.1f;
+
+uniform bool _DrawEdges <
+    ui_category         = "Preprocess Settings";
+    ui_category_closed  = true;
+    ui_type             = "box";
+    ui_label            = "Draw Edges";
+    ui_tooltip          = "";
+> = 0.1f;
+
+uniform bool _DLAAEdges <
+    ui_category         = "Preprocess Settings";
+    ui_category_closed  = true;
+    ui_type             = "box";
+    ui_label            = "DLAA Edges";
+    ui_tooltip          = "";
+> = 0.1f;
+
+uniform float _AlphaDLAAThreshold <
+    ui_category         = "Preprocess Settings";
+    ui_category_closed  = true;
+    ui_min              = 0.0f;
+    ui_max              = 1.0f;
+    ui_type             = "slider";
+    ui_label            = "DLAA Alpha Threshold";
+    ui_tooltip          = "";
 > = 0.1f;
 
 uniform float3 _Color <
@@ -54,8 +92,14 @@ uniform float3 _Color <
     ui_max              = 1.0f;
     ui_type             = "color";
     ui_label            = "Color";
-    ui_tooltip          = "Adjust the threshold for normal differences to count as an edge.";
+    ui_tooltip          = "";
 > = 0.1f;
+
+texture BackBufferTex : COLOR;
+
+sampler BackBuffer { 
+    Texture = BackBufferTex;
+};
 
 texture2D NormalTex {
     Width       = BUFFER_WIDTH;
@@ -70,14 +114,66 @@ sampler2D Normals {
     MipFilter   = POINT;
 };
 
-texture2D EgesTex {
+texture2D EdgesTex {
     Width       = BUFFER_WIDTH;
     Height      = BUFFER_HEIGHT;
     Format      = RGBA16F;
 };
 
 sampler2D Edges {
-    Texture     = EgesTex;
+    Texture     = EdgesTex;
+    MagFilter   = POINT;
+    MinFilter   = POINT;
+    MipFilter   = POINT;
+};
+
+texture2D DLAATex {
+    Width       = BUFFER_WIDTH;
+    Height      = BUFFER_HEIGHT;
+    Format      = RGBA16F;
+};
+
+sampler2D DLAA {
+    Texture     = DLAATex;
+    MagFilter   = POINT;
+    MinFilter   = POINT;
+    MipFilter   = POINT;
+};
+
+texture2D DLAATex2 {
+    Width       = BUFFER_WIDTH;
+    Height      = BUFFER_HEIGHT;
+    Format      = RGBA16F;
+};
+
+sampler2D DLAA2 {
+    Texture     = DLAATex2;
+    MagFilter   = POINT;
+    MinFilter   = POINT;
+    MipFilter   = POINT;
+};
+
+texture2D WorldDLAATex {
+    Width       = BUFFER_WIDTH;
+    Height      = BUFFER_HEIGHT;
+    Format      = RGBA16F;
+};
+
+sampler2D WorldDLAA {
+    Texture     = WorldDLAATex;
+    MagFilter   = POINT;
+    MinFilter   = POINT;
+    MipFilter   = POINT;
+};
+
+texture2D WorldDLAATex2 {
+    Width       = BUFFER_WIDTH;
+    Height      = BUFFER_HEIGHT;
+    Format      = RGBA16F;
+};
+
+sampler2D WorldDLAA2 {
+    Texture     = WorldDLAATex2;
     MagFilter   = POINT;
     MinFilter   = POINT;
     MipFilter   = POINT;
@@ -138,16 +234,6 @@ float4 PS_EdgeDetect(float4 position : SV_POSITION, float2 uv : TEXCOORD) : SV_T
     float4 se = tex2D(Normals, uv + float2( 1,  1) * texelSize);
 
     float depthSum = 0.0f;
-    //depthSum += abs(w.w  - c.w);
-    //depthSum += abs(e.w  - c.w);
-    //depthSum += abs(n.w  - c.w);
-    //depthSum += abs(s.w  - c.w);
-    //depthSum += abs(nw.w - c.w);
-    //depthSum += abs(sw.w - c.w);
-    //depthSum += abs(ne.w - c.w);
-    //depthSum += abs(se.w - c.w);
-    
-
     depthSum += abs(tex2Dlod(ReShade::DepthBuffer, float4(uv + float2(-1,  0) * texelSize, 0, 0)).x - tex2Dlod(ReShade::DepthBuffer, float4(uv, 0, 0)).x);
     depthSum += abs(tex2Dlod(ReShade::DepthBuffer, float4(uv + float2( 1,  0) * texelSize, 0, 0)).x - tex2Dlod(ReShade::DepthBuffer, float4(uv, 0, 0)).x);
     depthSum += abs(tex2Dlod(ReShade::DepthBuffer, float4(uv + float2( 0, -1) * texelSize, 0, 0)).x - tex2Dlod(ReShade::DepthBuffer, float4(uv, 0, 0)).x);
@@ -160,17 +246,6 @@ float4 PS_EdgeDetect(float4 position : SV_POSITION, float2 uv : TEXCOORD) : SV_T
     float depth = tex2Dlod(ReShade::DepthBuffer, float4(uv, 0, 0)).x;
     depth /= RESHADE_DEPTH_LINEARIZATION_FAR_PLANE - depth * (RESHADE_DEPTH_LINEARIZATION_FAR_PLANE - 1);
     depth = 1 - depth / RESHADE_DEPTH_LINEARIZATION_FAR_PLANE;
-    //depth /= RESHADE_DEPTH_LINEARIZATION_FAR_PLANE;
-    
-    //depth = (exp(depth * log(0.01 + 1.0)) - 1.0) / 0.01;
-    //depth = 1 / depth;
-    //depthSum = 1 / depth;
-
-    //depthSum *= 10000;
-    
-    //if (true)
-    //    return float4(depthSum, depthSum, depthSum, 1.0f);
-
 
     float3 normalSum = 0.0f;
     normalSum += abs(w.rgb  - c.rgb);
@@ -184,8 +259,7 @@ float4 PS_EdgeDetect(float4 position : SV_POSITION, float2 uv : TEXCOORD) : SV_T
 
     float alpha = 0;
     float4 output = float4(0, 0, 0, 0);
-    if (dot(normalSum, 1) > _NormalThreshold && depthSum > _DepthThreshold / 10000)
-    {
+    if (dot(normalSum, 1) > _NormalThreshold && depthSum > _DepthThreshold / 10000) {
         output.r = _Color.r;
         output.g = _Color.g;
         output.b = _Color.b;
@@ -195,17 +269,89 @@ float4 PS_EdgeDetect(float4 position : SV_POSITION, float2 uv : TEXCOORD) : SV_T
     return output;
 }
 
+float4 PS_EdgePrefilter(float4 position : SV_POSITION, float2 uv : TEXCOORD) : SV_TARGET {
+    return PreFilter(Edges, position, uv);
+}
+
+float4 PS_EdgeDLAA(float4 position : SV_POSITION, float2 uv : TEXCOORD) : SV_TARGET {
+    return PrcDLAA(Edges, DLAA, position, uv);
+}
+
+float4 PS_WorldPrefilter(float4 position : SV_POSITION, float2 uv : TEXCOORD) : SV_TARGET {
+    return PreFilter(BackBuffer, position, uv);
+}
+
+float4 PS_WorldDLAA(float4 position : SV_POSITION, float2 uv : TEXCOORD) : SV_TARGET {
+    return PrcDLAA(BackBuffer, WorldDLAA, position, uv);
+}
+
+float4 PS_Out(float4 position : SV_POSITION, float2 uv : TEXCOORD) : SV_TARGET {
+    float2 texelSize = float2(BUFFER_RCP_WIDTH, BUFFER_RCP_HEIGHT);
+
+    float4 color = tex2D(BackBuffer, uv + float2( 0,  0) * texelSize);
+    //float4 color = float4(0, 0, 0, 1);
+    float4 colorEDGE = tex2D(Edges, uv + float2( 0,  0) * texelSize);
+    float4 colorDLAA = tex2D(DLAA2, uv + float2( 0,  0) * texelSize);
+
+    float4 colorWorldDLAA = tex2D(WorldDLAA2, uv + float2( 0,  0) * texelSize);
+
+
+    if (_DrawEdges && colorEDGE.a > 0) {
+        color = lerp(color, colorEDGE, _AlphaMultiplier);
+    }
+    if (_DrawEdges && colorDLAA.a > 0) {
+        color = lerp(color, colorDLAA, _AlphaMultiplier * colorDLAA.a);
+    }
+    
+    if (_DLAAEdges && colorWorldDLAA.a > _AlphaDLAAThreshold) {
+        float avg = (colorWorldDLAA.r + colorWorldDLAA.g + colorWorldDLAA.b) / 3;
+        float4 fcolor = float4(_Color.r, _Color.g, _Color.b, 1.0f);
+        color = lerp(color, fcolor, _AlphaMultiplier);
+    }
+
+    return color;
+}
+
 technique E_DET < ui_label = "_E_DET"; ui_tooltip = "Replaces the screen image with an edges image."; > {
     pass {
-        RenderTarget = NormalTex;
         VertexShader = EdgePostProcessVS;
         PixelShader = PS_CalculateNormals;
+        RenderTarget = NormalTex;
     }
 
     pass {
-        RenderTarget = EgesTex;
         VertexShader = EdgePostProcessVS;
-        PixelShader = PS_EdgeDetect;
+        PixelShader  = PS_EdgeDetect;
+        RenderTarget = EdgesTex;
+    }
+
+    pass {
+		VertexShader = EdgePostProcessVS;
+		PixelShader  = PS_EdgePrefilter;
+		RenderTarget = DLAATex;
+	}
+	
+    pass {
+		VertexShader = EdgePostProcessVS;
+		PixelShader  = PS_EdgeDLAA;
+        RenderTarget = DLAATex2;
+	}
+
+    pass {
+		VertexShader = EdgePostProcessVS;
+		PixelShader  = PS_WorldPrefilter;
+		RenderTarget = WorldDLAATex;
+	}
+	
+    pass {
+		VertexShader = EdgePostProcessVS;
+		PixelShader  = PS_WorldDLAA;
+        RenderTarget = WorldDLAATex2;
+	}
+
+    pass {
+        VertexShader = EdgePostProcessVS;
+		PixelShader = PS_Out;
     }
 }
 
